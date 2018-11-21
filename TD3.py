@@ -63,7 +63,31 @@ class Critic(nn.Module):
 		x1 = F.relu(self.l1(xu))
 		x1 = F.relu(self.l2(x1))
 		x1 = self.l3(x1)
-		return x1 
+		return x1
+
+
+
+
+
+class Value(nn.Module):
+	def __init__(self, state_dim):
+		super(Value, self).__init__()
+
+		# Q1 architecture
+		self.l1 = nn.Linear(state_dim, 400)
+		self.l2 = nn.Linear(400, 300)
+		self.l3 = nn.Linear(300, 1)
+
+	def forward(self, x):
+
+		x1 = F.relu(self.l1(x))
+		x1 = F.relu(self.l2(x1))
+		x1 = self.l3(x1)
+
+		return x1
+
+
+
 
 
 class TD3(object):
@@ -76,7 +100,13 @@ class TD3(object):
 		self.critic = Critic(state_dim, action_dim).to(device)
 		self.critic_target = Critic(state_dim, action_dim).to(device)
 		self.critic_target.load_state_dict(self.critic.state_dict())
-		self.critic_optimizer = torch.optim.Adam(self.critic.parameters())		
+		self.critic_optimizer = torch.optim.Adam(self.critic.parameters())
+
+		self.value = Value(state_dim).to(device)
+		self.value_target = Value(state_dim).to(device)
+		self.value_target.load_state_dict(self.value.state_dict())
+
+
 
 		self.max_action = max_action
 
@@ -86,11 +116,11 @@ class TD3(object):
 		return self.actor(state).cpu().data.numpy().flatten()
 
 
-	def train(self, replay_buffer, iterations, batch_size=100, discount=0.99, tau=0.005, policy_noise=0.2, noise_clip=0.5, policy_freq=2):
+	def train(self, use_advantage, replay_buffer, iterations, batch_size=100, discount=0.99, tau=0.005, policy_noise=0.2, noise_clip=0.5, policy_freq=2):
 
 		for it in range(iterations):
 
-			# Sample replay buffer 
+			# Sample replay buffer
 			x, y, u, r, d = replay_buffer.sample(batch_size)
 			state = torch.FloatTensor(x).to(device)
 			action = torch.FloatTensor(u).to(device)
@@ -98,35 +128,55 @@ class TD3(object):
 			done = torch.FloatTensor(1 - d).to(device)
 			reward = torch.FloatTensor(r).to(device)
 
-			# Select action according to policy and add clipped noise 
+			# Select action according to policy and add clipped noise
 			noise = torch.FloatTensor(u).data.normal_(0, policy_noise).to(device)
 			noise = noise.clamp(-noise_clip, noise_clip)
 			next_action = (self.actor_target(next_state) + noise).clamp(-self.max_action, self.max_action)
 			next_action = next_action.clamp(-self.max_action, self.max_action)
+
+
 
 			# Compute the target Q value
 			target_Q1, target_Q2 = self.critic_target(next_state, next_action)
 			target_Q = torch.min(target_Q1, target_Q2)
 			target_Q = reward + (done * discount * target_Q).detach()
 
+			#COMPUTE VALUE FUNC IF USING ADVANTAGE
+			if use_advantage:
+				target_val = reward + (done * discount * self.value_target(next_state)).detach()
+
+
+
 			# Get current Q estimates
 			current_Q1, current_Q2 = self.critic(state, action)
 
-			# Compute critic loss
-			critic_loss = F.mse_loss(current_Q1, target_Q) + F.mse_loss(current_Q2, target_Q) 
+			#Get current value estimate
+			current_val = self.value(state)
+
+
+			# Compute critic loss and value loss if applicable
+			critic_loss = F.mse_loss(current_Q1, target_Q) + F.mse_loss(current_Q2, target_Q)
+			if use_advantage:
+				value_loss = F.mse_loss(current_val, target_val)
 
 			# Optimize the critic
 			self.critic_optimizer.zero_grad()
 			critic_loss.backward()
+			if use_advantage: value_loss.backward()
 			self.critic_optimizer.step()
+
+
 
 			# Delayed policy updates
 			if it % policy_freq == 0:
 
 				# Compute actor loss
-				actor_loss = -self.critic.Q1(state, self.actor(state)).mean()
-				
-				# Optimize the actor 
+				if use_advantage:
+					actor_loss = -(self.critic.Q1(state, self.actor(state)) - self.value(state)).mean()
+				else:
+					actor_loss = -self.critic.Q1(state, self.actor(state)).mean()
+
+				# Optimize the actor
 				self.actor_optimizer.zero_grad()
 				actor_loss.backward()
 				self.actor_optimizer.step()

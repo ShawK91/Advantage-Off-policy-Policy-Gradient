@@ -1,4 +1,5 @@
 import numpy as np
+import argparse
 
 # Code based on: 
 # https://github.com/openai/baselines/blob/master/baselines/deepq/replay_buffer.py
@@ -25,3 +26,12 @@ class ReplayBuffer(object):
 			d.append(np.array(D, copy=False))
 
 		return np.array(x), np.array(y), np.array(u), np.array(r).reshape(-1, 1), np.array(d).reshape(-1, 1)
+
+
+def str2bool(v):
+    if v.lower() in ('yes', 'true', 't', 'y', '1'):
+        return True
+    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+        return False
+    else:
+        raise argparse.ArgumentTypeError('Boolean value expected.')
